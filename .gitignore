@@ -1,0 +1,17 @@
+# Arquivo .gitignore
+
+# Ambiente Virtual
+venv/
+.venv/
+
+# Arquivos de Cache do Python
+__pycache__/
+*.pyc
+
+# Banco de Dados SQLite
+*.db
+*.db-journal
+*.sqlite3
+
+# Arquivos do Streamlit
+.streamlit/
