@@ -5,7 +5,6 @@ from datetime import date, timedelta
 
 DB_FILE = "socio40graus.db"
 
-# Mapeamento de planos para dias de direito. Centralizado para fácil manutenção.
 PLAN_ALLOWANCE_DAYS = {
     "Finais de Semana": 8, "Misto": 8, "Feriado Regular": 8,
     "Finais de Semana Premium": 8, "Misto Premium": 8, "Feriado Premium": 7
@@ -21,7 +20,7 @@ def init_db():
                 first_name TEXT, last_name TEXT, email TEXT UNIQUE,
                 role TEXT NOT NULL DEFAULT 'recepcionista' CHECK(role IN ('admin', 'recepcionista'))
             )""")
-        # Tabela de membros com NOVAS COLUNAS para controle de diárias
+        # Tabela de membros
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS members (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL, cpf TEXT UNIQUE NOT NULL, email TEXT UNIQUE NOT NULL,
@@ -83,14 +82,12 @@ def populate_initial_data(cursor):
     cursor.execute("SELECT COUNT(*) FROM users")
     user_count = cursor.fetchone()[0]
     if user_count == 0:
-        print("BANCO DE DADOS DE USUÁRIOS VAZIO: Criando usuário 'admin' padrão...")
         from auth import hash_password
         username = "admin"
         password = "admin_password"
         hashed_password = hash_password(password)
         cursor.execute("INSERT INTO users (username, password_hash, first_name, last_name, email, role) VALUES (?, ?, ?, ?, ?, ?)",
                        (username, hashed_password, 'Admin', 'User', 'admin@40graus.com', 'admin'))
-        print("Usuário 'admin' criado com sucesso.")
 
 # --- Funções de CRUD para Usuários do Sistema ---
 def add_system_user(username, password_hash, first_name, last_name, email, role):
@@ -142,7 +139,6 @@ def add_member(full_name, cpf, email, phone, birth_date, address, quota_type, us
             conn.commit()
         return True
     except sqlite3.IntegrityError: return False
-
 def get_all_members():
     with sqlite3.connect(DB_FILE) as conn: return pd.read_sql_query("SELECT id as ID, full_name as 'Nome Completo', cpf as CPF, email as Email, phone as Telefone, quota_type as Cota FROM members ORDER BY full_name", conn)
 def get_member_by_id(member_id):
@@ -273,53 +269,35 @@ def get_accommodation_types():
         df = pd.read_sql_query("SELECT type FROM accommodations ORDER BY type", conn)
     return df['type'].tolist()
 def get_all_bookings_with_details():
-    """Busca todas as reservas com detalhes do sócio para exibição em tabela."""
     with sqlite3.connect(DB_FILE) as conn:
         query = """
             SELECT
-                b.id as 'ID Reserva',
-                m.full_name as 'Sócio',
-                b.accommodation_type as 'Acomodação',
-                b.start_date as 'Check-in',
-                b.end_date as 'Check-out',
-                b.status as 'Status'
-            FROM bookings b
-            JOIN members m ON b.member_id = m.id
-            ORDER BY b.start_date DESC
+                b.id as 'ID Reserva', m.full_name as 'Sócio', b.accommodation_type as 'Acomodação',
+                b.start_date as 'Check-in', b.end_date as 'Check-out', b.status as 'Status'
+            FROM bookings b JOIN members m ON b.member_id = m.id ORDER BY b.start_date DESC
         """
         return pd.read_sql_query(query, conn)
 def update_booking_status(booking_id, new_status):
-    """Atualiza o status de uma reserva e devolve as diárias se for cancelada."""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            # Pega os detalhes da reserva antes de alterar
             cursor.execute("SELECT member_id, start_date, end_date, status FROM bookings WHERE id = ?", (booking_id,))
             booking_data = cursor.fetchone()
             if not booking_data: return False
-            
             member_id, start_str, end_str, old_status = booking_data
-            
-            # Só faz algo se o status realmente mudar
-            if old_status == new_status:
-                return True
-
+            if old_status == new_status: return True
             cursor.execute("BEGIN TRANSACTION")
-            # Atualiza o status da reserva
             cursor.execute("UPDATE bookings SET status = ? WHERE id = ?", (new_status, booking_id))
-            
-            # Se a reserva estava confirmada e agora foi cancelada, devolve as diárias
             if old_status == 'Confirmada' and new_status == 'Cancelada':
                 duration = (date.fromisoformat(end_str) - date.fromisoformat(start_str)).days
                 cursor.execute("UPDATE members SET used_days = used_days - ? WHERE id = ?", (duration, member_id))
-            
             conn.commit()
         return True
     except sqlite3.Error as e:
         print(f"Erro ao atualizar status da reserva: {e}")
         conn.rollback()
         return False
-    
+
 # --- Funções para a Página de Configurações ---
 def get_all_settings():
     with sqlite3.connect(DB_FILE) as conn:
@@ -335,8 +313,13 @@ def update_setting(key, value):
             conn.commit()
         return True
     except sqlite3.Error: return False
+
 def get_all_accommodations():
-    with sqlite3.connect(DB_FILE) as conn: return pd.read_sql_query("SELECT type as Tipo, total_quantity as Quantidade FROM accommodations", conn)
+    # --- LINHA CORRIGIDA ---
+    # Retorna os nomes de coluna originais do banco de dados ('type', 'total_quantity')
+    with sqlite3.connect(DB_FILE) as conn: 
+        return pd.read_sql_query("SELECT type, total_quantity FROM accommodations", conn)
+
 def update_accommodation_quantity(accommodation_type, quantity):
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -363,6 +346,33 @@ def delete_holiday(holiday_id):
             conn.commit()
         return cursor.rowcount > 0
     except sqlite3.Error: return False
+def has_booking_in_bimester(member_id, target_date_str):
+    target_date = date.fromisoformat(target_date_str)
+    bimester = (target_date.month - 1) // 2
+    year = target_date.year
+    bimester_start_month = bimester * 2 + 1
+    bimester_end_month = bimester_start_month + 1
+    bimester_start_date = date(year, bimester_start_month, 1)
+    if bimester_end_month == 12: bimester_end_date = date(year, 12, 31)
+    else: bimester_end_date = date(year, bimester_end_month + 1, 1) - timedelta(days=1)
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""SELECT COUNT(*) FROM bookings WHERE member_id = ? AND status = 'Confirmada' AND start_date <= ? AND end_date >= ?""",
+                       (member_id, bimester_end_date.isoformat(), bimester_start_date.isoformat()))
+        count = cursor.fetchone()[0]
+    return count > 0
+def get_last_quitinete_checkout_date(member_id):
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(end_date) FROM bookings WHERE member_id = ? AND accommodation_type = 'Quitinete Premium' AND status = 'Confirmada'", (member_id,))
+        result = cursor.fetchone()[0]
+    return date.fromisoformat(result) if result else None
+def is_booking_in_special_holiday(start_date_str, end_date_str):
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM holidays WHERE type = 'Especial' AND start_date < ? AND end_date > ?", (end_date_str, start_date_str))
+        count = cursor.fetchone()[0]
+    return count > 0
 
 # --- Funções para Transações Financeiras ---
 def add_transaction(member_id, amount, description, transaction_date):
