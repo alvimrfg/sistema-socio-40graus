@@ -5,9 +5,9 @@ import auth
 import database as db
 
 def show_page():
-    """Função que renderiza a página de Gestão de Acesso."""
     if st.session_state.get('user_role') != 'admin':
         st.error("Você não tem permissão para acessar esta página.")
+        st.image("https://media1.tenor.com/m/dsw_z2v3jOEAAAAC/gandalf-you-shall-not-pass.gif", width=300)
         st.stop()
 
     st.title("Gestão de Acesso ao Sistema")
@@ -19,8 +19,6 @@ def show_page():
 
     tab1, tab2, tab3 = st.tabs(["Visualizar Usuários", "Criar Novo Usuário", "Editar / Remover Usuário"])
 
-    # O resto do código desta página está correto e não precisa ser colado novamente
-    # Apenas garanta que a função 'def show_page():' esteja no topo e sem indentação.
     with tab1:
         st.subheader("Usuários Cadastrados no Sistema")
         st.dataframe(db.get_system_users(), use_container_width=True, hide_index=True)
@@ -28,6 +26,7 @@ def show_page():
     with tab2:
         st.subheader("Criar Novo Usuário do Sistema")
         with st.form("create_user_form", clear_on_submit=True):
+            st.write("Preencha os dados para criar um novo acesso.")
             col1, col2 = st.columns(2)
             with col1:
                 first_name = st.text_input("Primeiro Nome")
@@ -47,13 +46,12 @@ def show_page():
                     if db.add_system_user(username, hashed_password, first_name, last_name, email, role):
                         st.session_state.action_success_message = f"Usuário '{username}' criado com sucesso!"
                         st.rerun()
-                    else:
-                        st.error("Erro ao criar usuário. O nome de usuário ou email já pode existir.")
+                    else: st.error("Erro ao criar usuário. O nome de usuário ou email já pode existir.")
 
     with tab3:
         st.subheader("Editar ou Remover um Usuário Existente")
         users_df_edit = db.get_system_users()
-        user_list = [user for user in users_df_edit['username'].tolist() if user != 'admin']
+        user_list = users_df_edit['username'].tolist()
         
         selected_user = st.selectbox("Primeiro, selecione um usuário", options=user_list, index=None, placeholder="Escolha um usuário...")
 
@@ -78,19 +76,17 @@ def show_page():
                         if db.update_system_user(user_id, edit_first_name, edit_last_name, edit_email, edit_role):
                             st.session_state.action_success_message = f"Usuário '{selected_user}' atualizado com sucesso!"
                             st.rerun()
-                        else:
-                            st.error("Falha ao atualizar o usuário.")
+                        else: st.error("Falha ao atualizar o usuário.")
             
             elif action == "Remover Usuário":
                 logged_in_user = st.session_state.get('username', '')
-                if selected_user != logged_in_user:
+                if selected_user not in ['admin', logged_in_user]:
                     st.warning(f"Atenção: Esta ação é irreversível e removerá permanentemente o acesso de **{selected_user}**.", icon="⚠️")
                     if st.button(f"Confirmar Remoção de {selected_user}", type="primary"):
                         user_id = int(user_data['id'])
                         if db.delete_system_user(user_id):
                             st.session_state.action_success_message = f"Usuário '{selected_user}' removido com sucesso."
                             st.rerun()
-                        else:
-                            st.error("Falha ao remover o usuário.")
+                        else: st.error("Falha ao remover o usuário.")
                 else:
-                    st.error("Você não pode remover a si mesmo.", icon="🚫")
+                    st.error(f"O usuário '{selected_user}' não pode ser removido (usuário 'admin' principal ou você mesmo).", icon="🚫")
