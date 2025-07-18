@@ -5,10 +5,23 @@ import pandas as pd
 from datetime import date, timedelta
 import database as db
 import auth
+
+# Importa as "páginas" da pasta de views
 from views import gestao_acesso, clientes_cotas, reservas_calendario, configuracoes
 
 # --- INICIALIZAÇÃO DO BANCO DE DADOS ---
 db.init_db()
+
+# --- FUNÇÃO HELPER CENTRALIZADA ---
+@st.cache_data(ttl=300)
+def get_user_data(username):
+    """Função única e cacheada para buscar dados de um usuário do sistema."""
+    with sqlite3.connect(db.DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        data = cursor.fetchone()
+        return dict(data) if data else None
 
 # --- Configuração da Página ---
 st.set_page_config(page_title="Sócio 40 Graus", layout="wide")
@@ -21,6 +34,7 @@ if 'page' not in st.session_state: st.session_state['page'] = 'dashboard'
 # ROTEADOR PRINCIPAL DA APLICAÇÃO
 # =================================================================================
 
+# Se o usuário NÃO estiver logado, mostra a tela de login.
 if not st.session_state.get('logged_in'):
     st.header("Login - Sistema Sócio 40 Graus")
     with st.form("login_form"):
@@ -28,14 +42,7 @@ if not st.session_state.get('logged_in'):
         password = st.text_input("Senha", type="password")
         submitted = st.form_submit_button("Entrar")
         if submitted:
-            @st.cache_data(ttl=300)
-            def get_user_data(username):
-                with sqlite3.connect(db.DB_FILE) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-                    data = cursor.fetchone()
-                    return dict(data) if data else None
+            # Usa a função centralizada
             user_data = get_user_data(username)
             if user_data and auth.verify_password(password, user_data['password_hash']):
                 st.session_state['logged_in'] = True
@@ -45,11 +52,15 @@ if not st.session_state.get('logged_in'):
                 st.rerun()
             else:
                 st.error("Usuário ou senha inválidos.")
+
+# Se o usuário ESTIVER logado, constrói a interface principal.
 else:
+    # --- BARRA LATERAL DE NAVEGAÇÃO ---
     with st.sidebar:
         st.title(f"Bem-vindo(a),\n{st.session_state['username'].capitalize()}!")
         st.markdown(f"**Função:** `{st.session_state['user_role']}`")
         st.divider()
+
         st.header("Menu Principal")
         if st.button("Dashboard", use_container_width=True): st.session_state.page = 'dashboard'; st.rerun()
         if st.button("Clientes e Cotas", use_container_width=True): st.session_state.page = 'clientes_cotas'; st.rerun()
@@ -68,16 +79,10 @@ else:
                 new_password = st.text_input("Nova Senha", type="password", key="pw_new_sidebar")
                 confirm_password = st.text_input("Confirmar Nova Senha", type="password", key="pw_confirm_sidebar")
                 if st.form_submit_button("Alterar Senha"):
-                    @st.cache_data(ttl=300)
-                    def get_user_data(username):
-                        with sqlite3.connect(db.DB_FILE) as conn:
-                            conn.row_factory = sqlite3.Row
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-                            data = cursor.fetchone()
-                            return dict(data) if data else None
+                    # Usa a função centralizada
                     user_data = get_user_data(st.session_state['username'])
                     user_id = int(user_data['id'])
+                    
                     if not auth.verify_password(current_password, user_data['password_hash']):
                         st.warning("A senha atual está incorreta.")
                     elif not new_password:
@@ -88,6 +93,9 @@ else:
                         new_hashed_password = auth.hash_password(new_password)
                         if db.update_password(user_id, new_hashed_password):
                             st.success("Senha alterada com sucesso!")
+                            # LINHA CRÍTICA: Limpa o cache para forçar a releitura dos dados do usuário
+                            get_user_data.clear()
+                            st.rerun()
                         else:
                             st.error("Ocorreu um erro ao alterar a senha.")
         
@@ -95,6 +103,7 @@ else:
             for key in list(st.session_state.keys()): del st.session_state[key]
             st.rerun()
 
+    # --- RENDERIZAÇÃO DA PÁGINA SELECIONADA ---
     if st.session_state.page == 'dashboard':
         st.title("Dashboard")
         st.markdown("---")
@@ -119,6 +128,7 @@ else:
         except Exception as e:
             st.error(f"Ocorreu um erro ao carregar os dados do dashboard: {e}")
             st.warning("Cadastre alguns clientes e reservas para que os dados apareçam aqui.")
+
     elif st.session_state.page == 'clientes_cotas':
         clientes_cotas.show_page()
     elif st.session_state.page == 'reservas_calendario':
